@@ -251,6 +251,7 @@
   <aside class="controls">
     <h1>Ad Preview Generator</h1>
     <p class="sub">Meta Ads Library style. Upload creatives, set the copy, export PNGs.</p>
+    <p class="sub" id="saveNote" style="color:#42b72a;margin-bottom:16px">Auto-saves to this browser.</p>
 
     <button class="upload-btn" onclick="document.getElementById('creatives').click()">＋ Upload creatives</button>
     <input type="file" id="creatives" accept="image/*" multiple webkitdirectory />
@@ -323,6 +324,9 @@
     <div class="divider"></div>
     <button class="upload-btn" onclick="downloadAll()">⬇ Download all (ZIP)</button>
     <button class="upload-btn secondary" onclick="exportAll()">Or save each as separate PNG</button>
+
+    <div class="divider"></div>
+    <button class="upload-btn secondary" onclick="clearSaved()">Clear saved data &amp; reset</button>
   </aside>
 
   <main class="stage">
@@ -340,10 +344,51 @@
 <script>
   const state = { creatives: [], logo: null };
 
+  // ---- persistence: everything lives in localStorage, no backend ----
+  const SAVE_KEY = 'adPreviewer.v1';
+  const DEFAULT_FIELDS = ['brandName','domain','primary','secondary','headline','description','ctaCustom'];
+  let saveTimer;
+  function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveState, 400); }
+  function setNote(text, ok){
+    const n = document.getElementById('saveNote');
+    n.textContent = text; n.style.color = ok === false ? '#e0245e' : '#42b72a';
+  }
+  function saveState(){
+    try {
+      const d = {};
+      DEFAULT_FIELDS.forEach(id => d[id] = document.getElementById(id).value);
+      d.cta = document.getElementById('cta').value;
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ defaults: d, logo: state.logo, creatives: state.creatives }));
+      setNote('Saved ✓');
+    } catch(e){
+      setNote('Too large to auto-save — export your work (browser storage limit reached).', false);
+    }
+  }
+  function loadState(){
+    let data;
+    try { data = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch(e){ return; }
+    if (!data) return;
+    const d = data.defaults || {};
+    DEFAULT_FIELDS.forEach(id => { if (d[id] != null) document.getElementById(id).value = d[id]; });
+    if (d.cta) {
+      document.getElementById('cta').value = d.cta;
+      document.getElementById('ctaCustom').style.display = d.cta === '__custom' ? 'block' : 'none';
+    }
+    state.logo = data.logo || null;
+    state.creatives = Array.isArray(data.creatives) ? data.creatives : [];
+  }
+  function clearSaved(){
+    if (!confirm('Clear all saved ads and reset to the sample?')) return;
+    try { localStorage.removeItem(SAVE_KEY); } catch(e){}
+    location.reload();
+  }
+
   // ---- sidebar defaults (applied to NEW uploads; existing ads edited inline) ----
   document.getElementById('cta').addEventListener('change', e => {
     document.getElementById('ctaCustom').style.display = e.target.value === '__custom' ? 'block' : 'none';
+    scheduleSave();
   });
+  DEFAULT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', scheduleSave));
 
   function getCTA() {
     const sel = document.getElementById('cta');
@@ -366,7 +411,7 @@
     if (!state.creatives.length) return;
     const d = defaults();
     state.creatives.forEach(c => c.copy = { ...d });
-    render();
+    render(); scheduleSave();
   }
 
   // ---- file handling ----
@@ -377,7 +422,7 @@
       reader.onload = e => {
         state.creatives.push({ name: f.name, url: e.target.result, copy: defaults() });
         updateCount();
-        render();
+        render(); scheduleSave();
       };
       reader.readAsDataURL(f);
     });
@@ -388,7 +433,7 @@
     const f = e.target.files[0];
     if (!f) return;
     const reader = new FileReader();
-    reader.onload = ev => { state.logo = ev.target.result; render(); };
+    reader.onload = ev => { state.logo = ev.target.result; render(); scheduleSave(); };
     reader.readAsDataURL(f);
   });
 
@@ -452,10 +497,10 @@
     const el = e.target.closest('[contenteditable]');
     if (!el) return;
     const i = +el.dataset.index;
-    if (state.creatives[i]) state.creatives[i].copy[el.dataset.field] = el.innerText;
+    if (state.creatives[i]) { state.creatives[i].copy[el.dataset.field] = el.innerText; scheduleSave(); }
   });
 
-  function removeAd(i){ state.creatives.splice(i,1); updateCount(); render(); }
+  function removeAd(i){ state.creatives.splice(i,1); updateCount(); render(); scheduleSave(); }
 
   async function exportOne(i){
     const node = document.getElementById('ad-'+i);
@@ -497,6 +542,8 @@
     if (btn) btn.textContent = label;
   }
 
+  loadState();
+  updateCount();
   render();
 </script>
 </body>
