@@ -181,7 +181,8 @@
     display: block;
     overflow: hidden;
   }
-  .ad-image-box img { width: 100%; height: auto; display: block; }
+  .ad-image-box img,
+  .ad-image-box video { width: 100%; height: auto; display: block; }
   .ad-footer {
     display: flex;
     align-items: center;
@@ -254,9 +255,9 @@
     <p class="sub" id="saveNote" style="color:#42b72a;margin-bottom:16px">Auto-saves to this browser.</p>
 
     <button class="upload-btn" onclick="document.getElementById('creatives').click()">＋ Upload creatives</button>
-    <input type="file" id="creatives" accept="image/*" multiple webkitdirectory />
-    <button class="upload-btn secondary" onclick="document.getElementById('creativesFiles').click()">Or pick individual images</button>
-    <input type="file" id="creativesFiles" accept="image/*" multiple />
+    <input type="file" id="creatives" accept="image/*,video/*" multiple webkitdirectory />
+    <button class="upload-btn secondary" onclick="document.getElementById('creativesFiles').click()">Or pick individual files</button>
+    <input type="file" id="creativesFiles" accept="image/*,video/*" multiple />
     <p class="hint" id="fileCount">No creatives uploaded yet.</p>
 
     <div class="divider"></div>
@@ -337,7 +338,7 @@
     <div id="grid" class="grid"></div>
     <div id="empty" class="empty">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-      <div>Upload a folder of creatives to see ad previews.<br/>Each image becomes one ad using the copy on the left.</div>
+      <div>Upload a folder of creatives to see ad previews.<br/>Each image or video becomes one ad using the copy on the left.</div>
     </div>
   </main>
 
@@ -358,8 +359,12 @@
       const d = {};
       DEFAULT_FIELDS.forEach(id => d[id] = document.getElementById(id).value);
       d.cta = document.getElementById('cta').value;
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ defaults: d, logo: state.logo, creatives: state.creatives }));
-      setNote('Saved ✓');
+      // video data is too large for localStorage — keep the copy/metadata, drop the bytes
+      const creatives = state.creatives.map(c => c.type === 'video' ? { ...c, url: '', stripped: true } : c);
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ defaults: d, logo: state.logo, creatives }));
+      setNote(state.creatives.some(c => c.type === 'video')
+        ? 'Saved ✓ — videos aren’t stored, re-add them after reload'
+        : 'Saved ✓');
     } catch(e){
       setNote('Too large to auto-save — export your work (browser storage limit reached).', false);
     }
@@ -375,7 +380,8 @@
       document.getElementById('ctaCustom').style.display = d.cta === '__custom' ? 'block' : 'none';
     }
     state.logo = data.logo || null;
-    state.creatives = Array.isArray(data.creatives) ? data.creatives : [];
+    // drop video creatives whose bytes weren't persisted
+    state.creatives = (Array.isArray(data.creatives) ? data.creatives : []).filter(c => !c.stripped);
   }
   function clearSaved(){
     if (!confirm('Clear all saved ads and reset to the sample?')) return;
@@ -416,11 +422,12 @@
 
   // ---- file handling ----
   function handleFiles(files) {
-    const imgs = [...files].filter(f => f.type.startsWith('image/'));
-    imgs.forEach(f => {
+    const media = [...files].filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+    media.forEach(f => {
       const reader = new FileReader();
       reader.onload = e => {
-        state.creatives.push({ name: f.name, url: e.target.result, copy: defaults() });
+        const type = f.type.startsWith('video/') ? 'video' : 'image';
+        state.creatives.push({ name: f.name, url: e.target.result, type, copy: defaults() });
         updateCount();
         render(); scheduleSave();
       };
@@ -474,7 +481,9 @@
           </div>
           ${ed('primary', i, o.primary, 'ad-primary', 'Primary text…')}
           ${ed('secondary', i, o.secondary, 'ad-secondary', 'Secondary text…')}
-          <div class="ad-image-box"><img src="${c.url}" /></div>
+          <div class="ad-image-box">${c.type === 'video'
+            ? `<video src="${c.url}" muted loop playsinline controls></video>`
+            : `<img src="${c.url}" />`}</div>
           <div class="ad-footer">
             <div class="ad-footer-text">
               ${ed('domain', i, o.domain, 'ad-domain', 'DISPLAY.URL')}
@@ -502,11 +511,37 @@
 
   function removeAd(i){ state.creatives.splice(i,1); updateCount(); render(); scheduleSave(); }
 
-  async function exportOne(i){
-    const node = document.getElementById('ad-'+i);
+  // capture a node to canvas; videos render blank in html2canvas, so we
+  // grab each video's current frame and swap in a still during the clone.
+  async function nodeToCanvas(node){
+    const frames = [...node.querySelectorAll('video')].map(v => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = v.videoWidth || v.clientWidth; c.height = v.videoHeight || v.clientHeight;
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        return c.toDataURL('image/png');
+      } catch(e){ return null; }
+    });
     document.body.classList.add('exporting');
-    const canvas = await html2canvas(node, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    const canvas = await html2canvas(node, {
+      scale: 2, backgroundColor: '#ffffff', useCORS: true,
+      onclone: doc => {
+        const cn = doc.getElementById(node.id);
+        if (!cn) return;
+        cn.querySelectorAll('video').forEach((v, idx) => {
+          const img = doc.createElement('img');
+          img.src = frames[idx] || '';
+          img.style.cssText = 'width:100%;height:auto;display:block';
+          v.replaceWith(img);
+        });
+      }
+    });
     document.body.classList.remove('exporting');
+    return canvas;
+  }
+
+  async function exportOne(i){
+    const canvas = await nodeToCanvas(document.getElementById('ad-'+i));
     const a = document.createElement('a');
     a.download = `ad-preview-${(state.creatives[i].name||('ad-'+i)).replace(/\.[^.]+$/,'')}.png`;
     a.href = canvas.toDataURL('image/png');
@@ -526,13 +561,11 @@
     const btn = event && event.target; const label = btn && btn.textContent;
     if (btn) btn.textContent = 'Rendering…';
     const zip = new JSZip();
-    document.body.classList.add('exporting');
     for (let i=0;i<state.creatives.length;i++){
-      const canvas = await html2canvas(document.getElementById('ad-'+i), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+      const canvas = await nodeToCanvas(document.getElementById('ad-'+i));
       const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
       zip.file(adFilename(i), blob);
     }
-    document.body.classList.remove('exporting');
     const out = await zip.generateAsync({ type: 'blob' });
     const a = document.createElement('a');
     a.download = 'ad-previews.zip';
