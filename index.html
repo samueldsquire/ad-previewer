@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ad Preview Generator — Meta style</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --fb-blue: #1877f2;
+    --fb-text: #050505;
+    --fb-secondary: #65676b;
+    --fb-border: #dadde1;
+    --fb-cta-bg: #e4e6eb;
+    --fb-cta-text: #050505;
+    --page-bg: #f0f2f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--page-bg);
+    color: var(--fb-text);
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ---------- Sidebar / controls ---------- */
+  .controls {
+    width: 360px;
+    flex-shrink: 0;
+    background: #fff;
+    border-right: 1px solid var(--fb-border);
+    padding: 24px 20px 60px;
+    overflow-y: auto;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  .controls h1 {
+    font-size: 18px;
+    margin: 0 0 4px;
+  }
+  .controls .sub {
+    font-size: 12px;
+    color: var(--fb-secondary);
+    margin: 0 0 20px;
+  }
+  .field { margin-bottom: 16px; }
+  .field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #374151;
+  }
+  .field input[type="text"],
+  .field textarea,
+  .field select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--fb-border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  .field textarea { min-height: 60px; }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    outline: none;
+    border-color: var(--fb-blue);
+  }
+  .field .hint { font-size: 11px; color: var(--fb-secondary); margin-top: 4px; }
+
+  .upload-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    padding: 10px;
+    background: var(--fb-blue);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .upload-btn:hover { background: #1668d6; }
+  .upload-btn.secondary {
+    background: var(--fb-cta-bg);
+    color: var(--fb-cta-text);
+  }
+  .upload-btn.secondary:hover { background: #d8dadf; }
+  input[type="file"] { display: none; }
+
+  .row { display: flex; gap: 8px; }
+  .row .field { flex: 1; }
+
+  .divider { height: 1px; background: var(--fb-border); margin: 20px 0; }
+
+  /* ---------- Preview area ---------- */
+  .stage {
+    flex: 1;
+    padding: 32px;
+    overflow-y: auto;
+  }
+  .stage-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .stage-head h2 { font-size: 15px; margin: 0; color: var(--fb-secondary); font-weight: 600; }
+  .count-pill {
+    font-size: 12px;
+    background: #fff;
+    border: 1px solid var(--fb-border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    color: var(--fb-secondary);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 28px;
+  }
+  .empty {
+    text-align: center;
+    color: var(--fb-secondary);
+    font-size: 14px;
+    margin-top: 80px;
+    line-height: 1.6;
+  }
+  .empty svg { opacity: 0.35; margin-bottom: 12px; }
+
+  /* ---------- The ad card ---------- */
+  .ad-wrap { display: flex; flex-direction: column; gap: 8px; }
+  .ad {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    overflow: hidden;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .ad-top { padding: 12px 12px 0; }
+  .ad-head { display: flex; align-items: center; gap: 8px; }
+  .ad-logo {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: #0a1f44;
+    flex-shrink: 0;
+    object-fit: cover;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 11px; font-weight: 700;
+    text-transform: uppercase;
+  }
+  .ad-brand { display: flex; flex-direction: column; }
+  .ad-brand .name { font-size: 14px; font-weight: 600; line-height: 1.2; }
+  .ad-brand .sponsored { font-size: 12px; color: var(--fb-secondary); line-height: 1.4; }
+  .ad-primary {
+    font-size: 14px;
+    line-height: 1.4;
+    padding: 12px 12px 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ad-secondary {
+    font-size: 14px;
+    line-height: 1.4;
+    padding: 4px 12px 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ad-image-box {
+    width: 100%;
+    background: #e9ebee;
+    display: block;
+    overflow: hidden;
+  }
+  .ad-image-box img { width: 100%; height: auto; display: block; }
+  .ad-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    gap: 12px;
+    background: #f7f8fa;
+  }
+  .ad-footer-text { min-width: 0; flex: 1; }
+  .ad-domain {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--fb-secondary);
+    letter-spacing: 0.2px;
+    margin-bottom: 2px;
+  }
+  .ad-headline {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.25;
+    margin-bottom: 3px;
+    word-break: break-word;
+  }
+  .ad-desc {
+    font-size: 13px;
+    color: var(--fb-secondary);
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .ad-cta {
+    flex-shrink: 0;
+    background: var(--fb-cta-bg);
+    color: var(--fb-cta-text);
+    border: none;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    align-self: center;
+  }
+  /* inline-editable fields */
+  [contenteditable] { outline: none; border-radius: 3px; }
+  [contenteditable]:hover { box-shadow: inset 0 0 0 1px #cfd3da; }
+  [contenteditable]:focus { box-shadow: inset 0 0 0 2px var(--fb-blue); background: #fff; }
+  [contenteditable]:empty:before { content: attr(data-ph); color: #b8bcc4; }
+  body.exporting [contenteditable]:empty:before { content: ""; }
+  body.exporting [contenteditable]:hover { box-shadow: none; }
+
+  .ad-actions { display: flex; gap: 8px; justify-content: center; }
+  .ad-actions button {
+    font-size: 12px;
+    background: #fff;
+    border: 1px solid var(--fb-border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    color: var(--fb-secondary);
+  }
+  .ad-actions button:hover { background: #f0f2f5; }
+</style>
+</head>
+<body>
+  <aside class="controls">
+    <h1>Ad Preview Generator</h1>
+    <p class="sub">Meta Ads Library style. Upload creatives, set the copy, export PNGs.</p>
+
+    <button class="upload-btn" onclick="document.getElementById('creatives').click()">＋ Upload creatives</button>
+    <input type="file" id="creatives" accept="image/*" multiple webkitdirectory />
+    <button class="upload-btn secondary" onclick="document.getElementById('creativesFiles').click()">Or pick individual images</button>
+    <input type="file" id="creativesFiles" accept="image/*" multiple />
+    <p class="hint" id="fileCount">No creatives uploaded yet.</p>
+
+    <div class="divider"></div>
+    <p class="hint" style="margin-top:0">Default copy — applied to new uploads. Edit any ad directly on its card to give it different copy.</p>
+
+    <div class="field">
+      <label>Brand / Page name</label>
+      <input type="text" id="brandName" value="Floris London" />
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>Logo</label>
+        <button class="upload-btn secondary" style="margin:0;padding:8px" onclick="document.getElementById('logo').click()">Upload logo</button>
+        <input type="file" id="logo" accept="image/*" />
+      </div>
+      <div class="field">
+        <label>Display URL</label>
+        <input type="text" id="domain" value="FLORISLONDON.COM" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Primary text</label>
+      <textarea id="primary">Floris London, British family perfumers since 1730, luxurious perfumes, bath &amp; body products, and home fragrances using the finest ingredients for a truly long-lasting scent.</textarea>
+    </div>
+
+    <div class="field">
+      <label>Secondary text (optional)</label>
+      <textarea id="secondary">Complimentary sample with all orders | Luxury gift-wrapping included</textarea>
+    </div>
+
+    <div class="field">
+      <label>Headline</label>
+      <input type="text" id="headline" value="Cherry Blossom - Eau de Parfum" />
+    </div>
+
+    <div class="field">
+      <label>Description</label>
+      <input type="text" id="description" value="Discover the World of Floris London, British Family Perfumers Since 1730. Shop online for finely crafted…" />
+    </div>
+
+    <div class="field">
+      <label>Call to action</label>
+      <select id="cta">
+        <option>Shop Now</option>
+        <option>Learn More</option>
+        <option>Sign Up</option>
+        <option>Book Now</option>
+        <option>Download</option>
+        <option>Get Offer</option>
+        <option>Subscribe</option>
+        <option>Contact Us</option>
+        <option>Send Message</option>
+        <option>Get Quote</option>
+        <option>Apply Now</option>
+        <option>Order Now</option>
+        <option value="__custom">Custom…</option>
+      </select>
+      <input type="text" id="ctaCustom" placeholder="Custom CTA text" style="display:none;margin-top:8px" />
+    </div>
+
+    <button class="upload-btn secondary" onclick="applyToAll()">Apply default copy to all ads</button>
+
+    <div class="divider"></div>
+    <button class="upload-btn" onclick="downloadAll()">⬇ Download all (ZIP)</button>
+    <button class="upload-btn secondary" onclick="exportAll()">Or save each as separate PNG</button>
+  </aside>
+
+  <main class="stage">
+    <div class="stage-head">
+      <h2>Live preview</h2>
+      <span class="count-pill" id="pill">0 ads</span>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      <div>Upload a folder of creatives to see ad previews.<br/>Each image becomes one ad using the copy on the left.</div>
+    </div>
+  </main>
+
+<script>
+  const state = { creatives: [], logo: null };
+
+  // ---- sidebar defaults (applied to NEW uploads; existing ads edited inline) ----
+  document.getElementById('cta').addEventListener('change', e => {
+    document.getElementById('ctaCustom').style.display = e.target.value === '__custom' ? 'block' : 'none';
+  });
+
+  function getCTA() {
+    const sel = document.getElementById('cta');
+    return sel.value === '__custom' ? (document.getElementById('ctaCustom').value || 'Shop Now') : sel.value;
+  }
+
+  function defaults() {
+    return {
+      brand: document.getElementById('brandName').value,
+      domain: document.getElementById('domain').value,
+      primary: document.getElementById('primary').value,
+      secondary: document.getElementById('secondary').value,
+      headline: document.getElementById('headline').value,
+      description: document.getElementById('description').value,
+      cta: getCTA(),
+    };
+  }
+
+  function applyToAll() {
+    if (!state.creatives.length) return;
+    const d = defaults();
+    state.creatives.forEach(c => c.copy = { ...d });
+    render();
+  }
+
+  // ---- file handling ----
+  function handleFiles(files) {
+    const imgs = [...files].filter(f => f.type.startsWith('image/'));
+    imgs.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        state.creatives.push({ name: f.name, url: e.target.result, copy: defaults() });
+        updateCount();
+        render();
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+  document.getElementById('creatives').addEventListener('change', e => handleFiles(e.target.files));
+  document.getElementById('creativesFiles').addEventListener('change', e => handleFiles(e.target.files));
+  document.getElementById('logo').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => { state.logo = ev.target.result; render(); };
+    reader.readAsDataURL(f);
+  });
+
+  function updateCount() {
+    const n = state.creatives.length;
+    document.getElementById('fileCount').textContent = n ? `${n} creative${n>1?'s':''} loaded.` : 'No creatives uploaded yet.';
+    document.getElementById('pill').textContent = `${n} ad${n!==1?'s':''}`;
+  }
+
+  function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function initials(name){ return (name||'').split(/\s+/).map(w=>w[0]).join('').slice(0,3); }
+
+  function ed(field, i, val, cls, ph) {
+    return `<div class="${cls}" contenteditable="true" data-field="${field}" data-index="${i}" data-ph="${esc(ph)}">${esc(val)}</div>`;
+  }
+
+  function render() {
+    const grid = document.getElementById('grid');
+    const empty = document.getElementById('empty');
+    empty.style.display = state.creatives.length ? 'none' : 'block';
+
+    grid.innerHTML = state.creatives.map((c, i) => {
+      const o = c.copy;
+      const logoHtml = state.logo
+        ? `<img class="ad-logo" src="${state.logo}" />`
+        : `<div class="ad-logo">${esc(initials(o.brand))}</div>`;
+      return `
+      <div class="ad-wrap">
+        <div class="ad" id="ad-${i}">
+          <div class="ad-top">
+            <div class="ad-head">
+              ${logoHtml}
+              <div class="ad-brand">
+                ${ed('brand', i, o.brand, 'name', 'Brand name')}
+                <span class="sponsored">Sponsored</span>
+              </div>
+            </div>
+          </div>
+          ${ed('primary', i, o.primary, 'ad-primary', 'Primary text…')}
+          ${ed('secondary', i, o.secondary, 'ad-secondary', 'Secondary text…')}
+          <div class="ad-image-box"><img src="${c.url}" /></div>
+          <div class="ad-footer">
+            <div class="ad-footer-text">
+              ${ed('domain', i, o.domain, 'ad-domain', 'DISPLAY.URL')}
+              ${ed('headline', i, o.headline, 'ad-headline', 'Headline')}
+              ${ed('description', i, o.description, 'ad-desc', 'Description')}
+            </div>
+            ${ed('cta', i, o.cta, 'ad-cta', 'CTA')}
+          </div>
+        </div>
+        <div class="ad-actions">
+          <button onclick="exportOne(${i})">Download PNG</button>
+          <button onclick="removeAd(${i})">Remove</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // inline edits → write back to that creative's copy (no re-render, keeps cursor)
+  document.getElementById('grid').addEventListener('input', e => {
+    const el = e.target.closest('[contenteditable]');
+    if (!el) return;
+    const i = +el.dataset.index;
+    if (state.creatives[i]) state.creatives[i].copy[el.dataset.field] = el.innerText;
+  });
+
+  function removeAd(i){ state.creatives.splice(i,1); updateCount(); render(); }
+
+  async function exportOne(i){
+    const node = document.getElementById('ad-'+i);
+    document.body.classList.add('exporting');
+    const canvas = await html2canvas(node, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    document.body.classList.remove('exporting');
+    const a = document.createElement('a');
+    a.download = `ad-preview-${(state.creatives[i].name||('ad-'+i)).replace(/\.[^.]+$/,'')}.png`;
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  }
+
+  async function exportAll(){
+    for (let i=0;i<state.creatives.length;i++){ await exportOne(i); await new Promise(r=>setTimeout(r,200)); }
+  }
+
+  function adFilename(i){
+    return `ad-${String(i+1).padStart(2,'0')}-${(state.creatives[i].name||'ad').replace(/\.[^.]+$/,'').replace(/[^\w-]+/g,'_')}.png`;
+  }
+
+  async function downloadAll(){
+    if (!state.creatives.length) return;
+    const btn = event && event.target; const label = btn && btn.textContent;
+    if (btn) btn.textContent = 'Rendering…';
+    const zip = new JSZip();
+    document.body.classList.add('exporting');
+    for (let i=0;i<state.creatives.length;i++){
+      const canvas = await html2canvas(document.getElementById('ad-'+i), { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      zip.file(adFilename(i), blob);
+    }
+    document.body.classList.remove('exporting');
+    const out = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.download = 'ad-previews.zip';
+    a.href = URL.createObjectURL(out);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    if (btn) btn.textContent = label;
+  }
+
+  render();
+</script>
+</body>
+</html>
